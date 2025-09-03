@@ -1,0 +1,7 @@
+.vscode/
+build/
+CMakeFiles/
+components/
+bootloader*/
+esp-idf/
+gdbinit/
