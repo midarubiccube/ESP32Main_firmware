@@ -122,8 +122,8 @@ void app_main() {
     uint8_t send_buff[32] = {0};
     for (int i = 0; i < 32; i++) send_buff[i] = i;
     twai_frame_t tx_msg = {
-        .header.id = 0x1,           // Message ID
-        .header.ide = true,         // Use 29-bit extended ID format
+        .header.id = 15,           // Message ID
+        .header.ide = false,         // Use 29-bit extended ID format
         .header.fdf = true,
         .header.brs = true,
         .buffer = send_buff,        // Pointer to data to transmit
