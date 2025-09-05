@@ -1,1 +1,1 @@
-idf_component_register(SRCS "main.c" INCLUDE_DIRS "." PRIV_REQUIRES mros2-esp32 PRIV_REQUIRES esp_driver_twai)
+idf_component_register(SRCS "main.cpp" INCLUDE_DIRS "." PRIV_REQUIRES mros2-esp32 PRIV_REQUIRES esp_driver_twai)
