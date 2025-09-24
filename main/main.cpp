@@ -13,39 +13,103 @@
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
 
+union ID
+{
+  struct ID_format {
+    int message_type : 4;
+    
+    int from_id1 : 2;
+    int from_id2 : 4;
+    int from_type : 4;
+
+    int to_id1 : 2;
+    int to_id2 : 4;
+    int to_type : 4;
+  } format;
+  uint32_t id; 
+};
+
+struct PowerBoard_receive
+{
+  bool ON_OFF;
+  uint8_t LED_R;
+  uint8_t LED_G;
+  uint8_t LED_B;
+  float MAX_current;
+  bool LED_FULLColor;
+};
+
+struct PowerBoard_send
+{
+  float Current;
+  float output_voltage;
+  float battery1_voltage;
+  float battery2_voltage;
+  bool emengecy_on;
+};
+
+
+struct MotorBoard_receive
+{
+  uint8_t mode;
+  int target;
+  float GAIN_P = -1;
+  float GAIN_I = -1;
+  float GAIN_D = -1;
+  float MAX_current;
+  bool must_receive;
+};
+
+struct MotorBoard_send
+{
+  uint8_t mode;
+  bool target;
+  float current;
+};
+
+
+struct Message_format {
+  ID id;
+  bool is_remote = false;
+  union{
+    PowerBoard_receive power_rsv;
+    PowerBoard_send power_send;
+    MotorBoard_receive motor_rsv;
+    MotorBoard_send  motor_send;
+    char data[32] = {0};
+  } data;
+};
+
+
 static const char TAG[] = "main";
 twai_node_handle_t handle = NULL;
-void send_can(int data);
+void send_can(Message_format msg);
 
 void userCallback(std_msgs::msg::UInt16 *msg)
 {
   MROS2_INFO("subscribed msg: '%d'", msg->data);
-  send_can(msg->data);
+  Message_format send = {0};
+  send.id.format.to_id1 = 0;
+  send.id.format.to_id2 = 0;
+  send.id.format.to_type = 1;
+  send.data.power_rsv.ON_OFF = msg->data;
+  send_can(send);
+
+  Message_format send2 = {0};
+  send2.id.format.to_id1 = 0;
+  send2.id.format.to_id2 = 0;
+  send2.id.format.to_type = 2;
+  send2.is_remote = false;
+  send2.data.motor_rsv.target = (int)(1.0 * 100.0);
+  send_can(send);
 }
 
 void userCallback2(geometry_msgs::msg::Twist *msg)
 {
-  int send_data  = msg->linear.x < 0 ? ((int)msg->linear.x)*100 : 0
-  MROS2_INFO("subscribed msg: '%f'",);
+  MROS2_INFO("cmd_vel msg: '%f'", msg->linear.x);
+
 }
  
-
-static QueueHandle_t rx_queue = NULL;
-
-static bool IRAM_ATTR twai_listener_on_error_callback(twai_node_handle_t handle, const twai_error_event_data_t *edata, void *user_ctx)
-{
-    ESP_LOGI(TAG, "bus error: arb_lost:%d bit_err:%d form_err:%d ", edata->err_flags.arb_lost, edata->err_flags.bit_err, edata->err_flags.form_err);
-    return false;
-}
-
-// Node state
-static bool IRAM_ATTR twai_listener_on_state_change_callback(twai_node_handle_t handle, const twai_state_change_event_data_t *edata, void *user_ctx)
-{
-    const char *twai_state_name[] = {"error_active", "error_warning", "error_passive", "bus_off"};
-    ESP_LOGI(TAG, "state changed: %s -> %s", twai_state_name[edata->old_sta], twai_state_name[edata->new_sta]);
-    return false;
-}
-
 static bool IRAM_ATTR nmea_on_received(
     twai_node_handle_t handle,
     const twai_rx_done_event_data_t *edata,
@@ -55,7 +119,7 @@ static bool IRAM_ATTR nmea_on_received(
 }
 
 static esp_err_t nmea_init(twai_node_handle_t *handle) {
-    static twai_onchip_node_config_t node_config = {};
+    twai_onchip_node_config_t node_config = {};
     node_config.io_cfg.tx = GPIO_NUM_10;
     node_config.io_cfg.rx = GPIO_NUM_9;
     node_config.bit_timing.bitrate = 1000000;
@@ -63,26 +127,30 @@ static esp_err_t nmea_init(twai_node_handle_t *handle) {
     node_config.tx_queue_depth = 5,
     twai_new_node_onchip(&node_config, handle);
     
+    twai_event_callbacks_t callbacks = {};
+    callbacks.on_rx_done = nmea_on_received;
+
+    twai_node_register_event_callbacks(*handle, &callbacks,NULL);
+
     twai_node_enable(*handle);
     return ESP_OK;
 } 
 
 
-void send_can(int data) {
+void send_can(Message_format msg) {
+  msg.id.format.from_id1 = 0;
+  msg.id.format.from_id2 = 0;
+  msg.id.format.from_type = 0;
 
-    ESP_LOGI(TAG, "init");    
-    ESP_LOGI(TAG, "init done");
-
-    uint8_t send_buff[32] = {0};
-    send_buff[0] = data;
-    twai_frame_t tx_msg={};
-    tx_msg.header.id = 15;           // Message ID
-    tx_msg.header.ide = false;         // Use 29-bit extended ID format
-    tx_msg.header.fdf = true;
-    tx_msg.header.brs = true;
-    tx_msg.buffer = send_buff;        // Pointer to data to transmit
-    tx_msg.header.dlc = 13;
-    ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 0));
+  twai_frame_t tx_msg={};
+  tx_msg.header.id = msg.id.id;           // Message ID
+  tx_msg.header.ide = true;         // Use 29-bit extended ID format
+  tx_msg.header.fdf = true;
+  tx_msg.header.brs = true;
+  tx_msg.header.rtr = msg.is_remote;
+  tx_msg.buffer = (uint8_t *)msg.data.data;        // Pointer to data to transmit
+  tx_msg.buffer_len = 32;
+  ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 0));
 }
 
 extern "C" void app_main(void)
