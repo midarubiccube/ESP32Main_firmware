@@ -13,73 +13,7 @@
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
 
-union ID
-{
-  struct ID_format {
-    int message_type : 4;
-    
-    int from_id1 : 2;
-    int from_id2 : 4;
-    int from_type : 4;
-
-    int to_id1 : 2;
-    int to_id2 : 4;
-    int to_type : 4;
-  } format;
-  uint32_t id; 
-};
-
-struct PowerBoard_receive
-{
-  bool ON_OFF;
-  uint8_t LED_R;
-  uint8_t LED_G;
-  uint8_t LED_B;
-  float MAX_current;
-  bool LED_FULLColor;
-};
-
-struct PowerBoard_send
-{
-  float Current;
-  float output_voltage;
-  float battery1_voltage;
-  float battery2_voltage;
-  bool emengecy_on;
-};
-
-
-struct MotorBoard_receive
-{
-  uint8_t mode;
-  int target;
-  float GAIN_P = -1;
-  float GAIN_I = -1;
-  float GAIN_D = -1;
-  float MAX_current;
-  bool must_receive;
-};
-
-struct MotorBoard_send
-{
-  uint8_t mode;
-  bool target;
-  float current;
-};
-
-
-struct Message_format {
-  ID id;
-  bool is_remote = false;
-  union{
-    PowerBoard_receive power_rsv;
-    PowerBoard_send power_send;
-    MotorBoard_receive motor_rsv;
-    MotorBoard_send  motor_send;
-    char data[32] = {0};
-  } data;
-};
-
+#include "message.hpp"
 
 static const char TAG[] = "main";
 twai_node_handle_t handle = NULL;
@@ -95,19 +29,19 @@ void userCallback(std_msgs::msg::UInt16 *msg)
   send.data.power_rsv.ON_OFF = msg->data;
   send_can(send);
 
-  Message_format send2 = {0};
-  send2.id.format.to_id1 = 0;
-  send2.id.format.to_id2 = 0;
-  send2.id.format.to_type = 2;
-  send2.is_remote = false;
-  send2.data.motor_rsv.target = (int)(1.0 * 100.0);
-  send_can(send);
+
 }
 
 void userCallback2(geometry_msgs::msg::Twist *msg)
 {
   MROS2_INFO("cmd_vel msg: '%f'", msg->linear.x);
-
+  Message_format send2 = {0};
+  send2.id.format.to_id1 = 0;
+  send2.id.format.to_id2 = 0;
+  send2.id.format.to_type = 2;
+  send2.is_remote = false;
+  send2.data.motor_rsv.target = (int)(msg->linear.x * 100.0);
+  send_can(send2);
 }
  
 static bool IRAM_ATTR nmea_on_received(
