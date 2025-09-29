@@ -40,8 +40,19 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   send2.id.format.to_id2 = 0;
   send2.id.format.to_type = 2;
   send2.is_remote = false;
-  send2.data.motor_rsv.target = (int)(msg->linear.x * 100.0);
+  
+  send2.data.motor_rsv.target = (int)((msg->linear.y + msg->linear.x) * 100.0);
   send_can(send2);
+  send2.data.motor_rsv.target = (int)((msg->linear.y - msg->linear.x) * 100.0);
+  send2.id.format.to_id2 = 1;
+  send_can(send2);
+  send2.data.motor_rsv.target = (int)((msg->linear.y + msg->linear.x) * -100.0);
+  send2.id.format.to_id2 = 2;
+  send_can(send2);
+  send2.data.motor_rsv.target = (int)((msg->linear.y - msg->linear.x) * -100.0);
+  send2.id.format.to_id2 = 3;
+  send_can(send2);
+
 }
  
 static bool IRAM_ATTR nmea_on_received(
@@ -58,7 +69,7 @@ static esp_err_t nmea_init(twai_node_handle_t *handle) {
     node_config.io_cfg.rx = GPIO_NUM_9;
     node_config.bit_timing.bitrate = 1000000;
     node_config.data_timing.bitrate = 2000000;
-    node_config.tx_queue_depth = 5,
+    node_config.tx_queue_depth = 100,
     twai_new_node_onchip(&node_config, handle);
     
     twai_event_callbacks_t callbacks = {};
@@ -84,7 +95,8 @@ void send_can(Message_format msg) {
   tx_msg.header.rtr = msg.is_remote;
   tx_msg.buffer = (uint8_t *)msg.data.data;        // Pointer to data to transmit
   tx_msg.buffer_len = 32;
-  ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 0));
+  ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 10));
+  osDelay(10);
 }
 
 extern "C" void app_main(void)
