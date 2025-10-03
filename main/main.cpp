@@ -1,6 +1,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 
+#include <math.h>
+
 #include "mros2.h"
 #include "mros2-platform.h"
 #include "std_msgs/msg/u_int16.hpp"
@@ -15,6 +17,9 @@
 
 #include "message.hpp"
 
+#define DEG_TO_RAD(deg)  ((deg) / 180.0 * M_PI)  // 度からラジアンへの変換
+
+
 static const char TAG[] = "main";
 twai_node_handle_t handle = NULL;
 void send_can(Message_format msg);
@@ -28,8 +33,6 @@ void userCallback(std_msgs::msg::UInt16 *msg)
   send.id.format.to_type = 1;
   send.data.power_rsv.ON_OFF = msg->data;
   send_can(send);
-
-
 }
 
 void userCallback2(geometry_msgs::msg::Twist *msg)
@@ -41,18 +44,11 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   send2.id.format.to_type = 2;
   send2.is_remote = false;
   
-  send2.data.motor_rsv.target = (int)((msg->linear.y + msg->linear.x) * 100.0);
+  send2.data.motor_rsv.target[0] = (int)(sinf(DEG_TO_RAD(msg->linear.x))*msg->angular.z*msg->linear.y);
+  send2.data.motor_rsv.target[1] = (int)(sinf(DEG_TO_RAD(msg->linear.x -90.0f))*msg->angular.z*msg->linear.y);
+  send2.data.motor_rsv.target[2] = (int)(sinf(DEG_TO_RAD(msg->linear.x - 180.0f))*msg->angular.z*msg->linear.y);
+  send2.data.motor_rsv.target[3] = (int)(sinf(DEG_TO_RAD(msg->linear.x - 270.0f))*msg->angular.z*msg->linear.y);
   send_can(send2);
-  send2.data.motor_rsv.target = (int)((msg->linear.y - msg->linear.x) * 100.0);
-  send2.id.format.to_id2 = 1;
-  send_can(send2);
-  send2.data.motor_rsv.target = (int)((msg->linear.y + msg->linear.x) * -100.0);
-  send2.id.format.to_id2 = 2;
-  send_can(send2);
-  send2.data.motor_rsv.target = (int)((msg->linear.y - msg->linear.x) * -100.0);
-  send2.id.format.to_id2 = 3;
-  send_can(send2);
-
 }
  
 static bool IRAM_ATTR nmea_on_received(
