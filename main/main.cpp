@@ -15,40 +15,42 @@
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
 
-#include "message.hpp"
+#include "message/motorBoard.hpp"
+#include "message/powerboard.hpp"
 
 #define DEG_TO_RAD(deg)  ((deg) / 180.0 * M_PI)  // 度からラジアンへの変換
 
 
 static const char TAG[] = "main";
 twai_node_handle_t handle = NULL;
-void send_can(Message_format msg);
+void send_can(ID id, uint8_t* data, size_t size);
 
 void userCallback(std_msgs::msg::UInt16 *msg)
 {
-  MROS2_INFO("subscribed msg: '%d'", msg->data);
-  Message_format send = {0};
-  send.id.format.to_id1 = 0;
-  send.id.format.to_id2 = 0;
-  send.id.format.to_type = 1;
-  send.data.power_rsv.ON_OFF = msg->data;
-  send_can(send);
+  PowerBoard_format sendmsg = {0};
+  sendmsg.id.format.to_BoardType = Board_Type::PowerBoard;
+  sendmsg.id.format.to_BoardID = 0;
+  sendmsg.id.format.message_type = Message_Type::Target;
+  sendmsg.data.target.ON_OFF = msg->data;
+
+  send_can(sendmsg.id, (uint8_t*)sendmsg.data.data, 32);
 }
 
 void userCallback2(geometry_msgs::msg::Twist *msg)
 {
   MROS2_INFO("cmd_vel msg: '%f'", msg->linear.x);
-  Message_format send2 = {0};
-  send2.id.format.to_id1 = 0;
-  send2.id.format.to_id2 = 0;
-  send2.id.format.to_type = 2;
-  send2.is_remote = false;
-  
-  send2.data.motor_rsv.target[0] = (int)(sinf(DEG_TO_RAD(msg->linear.x))*msg->angular.z*msg->linear.y);
-  send2.data.motor_rsv.target[1] = (int)(sinf(DEG_TO_RAD(msg->linear.x -90.0f))*msg->angular.z*msg->linear.y);
-  send2.data.motor_rsv.target[2] = (int)(sinf(DEG_TO_RAD(msg->linear.x - 180.0f))*msg->angular.z*msg->linear.y);
-  send2.data.motor_rsv.target[3] = (int)(sinf(DEG_TO_RAD(msg->linear.x - 270.0f))*msg->angular.z*msg->linear.y);
-  send_can(send2);
+  MotorBoard_format sendmsg = {0};
+  sendmsg.id.format.to_BoardType = Board_Type::MotorBoard;
+  sendmsg.id.format.to_BoardID = 0;
+  sendmsg.id.format.message_type = Message_Type::Target;
+
+  sendmsg.data.target.modem = ControlMode::PWM_Mode;
+  sendmsg.data.target.target[0] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x         ))*msg->angular.z*msg->linear.y);
+  sendmsg.data.target.target[1] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x -  90.0f))*msg->angular.z*msg->linear.y);
+  sendmsg.data.target.target[2] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 180.0f))*msg->angular.z*msg->linear.y);
+  sendmsg.data.target.target[3] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 270.0f))*msg->angular.z*msg->linear.y);
+
+  send_can(sendmsg.id, (uint8_t*)sendmsg.data.data, sizeof(MotorBoard_Target));
 }
  
 static bool IRAM_ATTR nmea_on_received(
@@ -56,6 +58,7 @@ static bool IRAM_ATTR nmea_on_received(
     const twai_rx_done_event_data_t *edata,
     void *user_ctx
 ){
+    MROS2_INFO("subscribed msg");
     return true;
 }
 
@@ -78,19 +81,18 @@ static esp_err_t nmea_init(twai_node_handle_t *handle) {
 } 
 
 
-void send_can(Message_format msg) {
-  msg.id.format.from_id1 = 0;
-  msg.id.format.from_id2 = 0;
-  msg.id.format.from_type = 0;
+void send_can(ID id, uint8_t* data, size_t size) {
+  id.format.from_BoardType = Board_Type::Master_Board;
+  id.format.from_BoardID = 0;
 
   twai_frame_t tx_msg={};
-  tx_msg.header.id = msg.id.id;           // Message ID
-  tx_msg.header.ide = true;         // Use 29-bit extended ID format
+  tx_msg.header.id = id.id;           // Message ID
+  tx_msg.header.ide = false;         // Use 29-bit extended ID format
   tx_msg.header.fdf = true;
   tx_msg.header.brs = true;
-  tx_msg.header.rtr = msg.is_remote;
-  tx_msg.buffer = (uint8_t *)msg.data.data;        // Pointer to data to transmit
-  tx_msg.buffer_len = 32;
+  tx_msg.header.rtr = false;
+  tx_msg.buffer = data;
+  tx_msg.buffer_len = size;
   ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 10));
   osDelay(10);
 }
