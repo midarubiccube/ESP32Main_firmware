@@ -21,7 +21,6 @@
 #define DEG_TO_RAD(deg) ((deg) / 180.0 * M_PI) // 度からラジアンへの変換
 
 static const char TAG[] = "main";
-twai_node_handle_t handle = NULL;
 void send_can(ID_Format id, uint8_t *data, size_t size);
 
 void userCallback(std_msgs::msg::UInt16 *msg)
@@ -31,15 +30,14 @@ void userCallback(std_msgs::msg::UInt16 *msg)
   id.format.to_BoardType = Board_Type::PowerBoard;
   id.format.to_BoardID = 0;
   id.format.message_type = Message_Type::Target;
-  sendmsg.ON_OFF = msg->data;
+  sendmsg.ON_OFF = !msg->data;
   MROS2_INFO("power %s", msg->data ? "on" : "off");
 
-  send_can(id, reinterpret_cast<uint8_t*>(&sendmsg), sizeof(PowerBoard_Target));
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(PowerBoard_Target));
 }
 
 void userCallback2(geometry_msgs::msg::Twist *msg)
 {
-  MROS2_INFO("cmd_vel msg: '%f'", msg->angular.x);
   ID_Format id;
   id.format.to_BoardType = Board_Type::MotorBoard;
   id.format.to_BoardID = 0;
@@ -51,21 +49,24 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   sendmsg.target[1] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 90.0f)) * msg->angular.z * msg->linear.y);
   sendmsg.target[2] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 180.0f)) * msg->angular.z * msg->linear.y);
   sendmsg.target[3] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 270.0f)) * msg->angular.z * msg->linear.y);
-  send_can(id, reinterpret_cast<uint8_t*>(&sendmsg), sizeof(MotorBoard_Target));
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target));
 
   id.format.to_BoardID = 1;
   sendmsg.mode = ControlMode::PWM_Mode;
   sendmsg.target[3] = static_cast<int>(msg->angular.x * 100.0f);
-  send_can(id, reinterpret_cast<uint8_t*>(&sendmsg), sizeof(MotorBoard_Target));
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target));
 }
-
-static bool IRAM_ATTR nmea_on_received(
-    twai_node_handle_t handle,
-    const twai_rx_done_event_data_t *edata,
-    void *user_ctx)
+static bool twai_rx_cb(twai_node_handle_t handle, const twai_rx_done_event_data_t *edata, void *user_ctx)
 {
-  MROS2_INFO("subscribed msg");
-  return true;
+    uint8_t recv_buff[64];
+    twai_frame_t rx_frame = {0};
+    rx_frame.buffer = recv_buff;
+    rx_frame.buffer_len = sizeof(recv_buff);
+    if (ESP_OK == twai_node_receive_from_isr(handle, &rx_frame)) {
+        // receive ok, do something here
+        MROS2_INFO("subscribed msg %ld",  rx_frame.header.id);
+    }
+    return false;
 }
 
 static esp_err_t nmea_init(twai_node_handle_t *handle)
@@ -79,13 +80,15 @@ static esp_err_t nmea_init(twai_node_handle_t *handle)
   twai_new_node_onchip(&node_config, handle);
 
   twai_event_callbacks_t callbacks = {};
-  callbacks.on_rx_done = nmea_on_received;
+  callbacks.on_rx_done = twai_rx_cb;
 
   twai_node_register_event_callbacks(*handle, &callbacks, NULL);
 
   twai_node_enable(*handle);
   return ESP_OK;
 }
+
+twai_node_handle_t handle = NULL;
 
 void send_can(ID_Format id, uint8_t *data, size_t size)
 {
@@ -103,6 +106,7 @@ void send_can(ID_Format id, uint8_t *data, size_t size)
   ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 0));
   osDelay(10);
 }
+
 
 extern "C" void app_main(void)
 {
