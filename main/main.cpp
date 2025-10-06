@@ -40,9 +40,9 @@ void userCallback(std_msgs::msg::UInt16 *msg)
 void userCallback2(geometry_msgs::msg::Twist *msg)
 {
   MROS2_INFO("cmd_vel msg: '%f'", msg->angular.x);
-  MotorBoard_format sendmsg = {0};
-  sendmsg.id.format.to_BoardType = Board_Type::MotorBoard;
-  sendmsg.id.format.to_BoardID = 0;
+  ID id;
+  id.format.to_BoardType = Board_Type::MotorBoard;
+  id.format.to_BoardID = 0;
   sendmsg.id.format.message_type = Message_Type::Target;
 
   sendmsg.data.target.modem = ControlMode::PWM_Mode;

@@ -1,0 +1,3 @@
+[submodule "main/messageFormat"]
+	path = main/messageFormat
+	url = https://github.com/midarubiccube/messageFomat.git
