@@ -32,13 +32,14 @@ void userCallback(std_msgs::msg::UInt16 *msg)
   sendmsg.id.format.to_BoardID = 0;
   sendmsg.id.format.message_type = Message_Type::Target;
   sendmsg.data.target.ON_OFF = msg->data;
+  MROS2_INFO("power %s", msg->data ? "on" : "off");
 
-  send_can(sendmsg.id, (uint8_t*)sendmsg.data.data, 32);
+  send_can(sendmsg.id, (uint8_t*)sendmsg.data.data, sizeof(PowerBoard_Target));
 }
 
 void userCallback2(geometry_msgs::msg::Twist *msg)
 {
-  MROS2_INFO("cmd_vel msg: '%f'", msg->linear.x);
+  MROS2_INFO("cmd_vel msg: '%f'", msg->angular.x);
   MotorBoard_format sendmsg = {0};
   sendmsg.id.format.to_BoardType = Board_Type::MotorBoard;
   sendmsg.id.format.to_BoardID = 0;
@@ -49,7 +50,11 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   sendmsg.data.target.target[1] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x -  90.0f))*msg->angular.z*msg->linear.y);
   sendmsg.data.target.target[2] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 180.0f))*msg->angular.z*msg->linear.y);
   sendmsg.data.target.target[3] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 270.0f))*msg->angular.z*msg->linear.y);
+  send_can(sendmsg.id, (uint8_t*)sendmsg.data.data, sizeof(MotorBoard_Target));
 
+  sendmsg.id.format.to_BoardID = 1;
+  sendmsg.data.target.modem = ControlMode::PWM_Mode;
+  sendmsg.data.target.target[3] = static_cast<int>(msg->angular.x * 100.0f);
   send_can(sendmsg.id, (uint8_t*)sendmsg.data.data, sizeof(MotorBoard_Target));
 }
  
@@ -93,7 +98,7 @@ void send_can(ID id, uint8_t* data, size_t size) {
   tx_msg.header.rtr = false;
   tx_msg.buffer = data;
   tx_msg.buffer_len = size;
-  ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 10));
+  ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 0));
   osDelay(10);
 }
 
