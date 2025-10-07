@@ -18,7 +18,17 @@
 #include "messageFormat/motorBoard.hpp"
 #include "messageFormat/powerboard.hpp"
 
+struct canfd_frame
+{
+  uint16_t identifier;
+  uint8_t data[64];
+  size_t length;
+  bool is_remote;
+};
+
 #define DEG_TO_RAD(deg) ((deg) / 180.0 * M_PI) // 度からラジアンへの変換
+
+static QueueHandle_t rx_queue = NULL;
 
 static const char TAG[] = "main";
 void send_can(ID_Format id, uint8_t *data, size_t size);
@@ -56,20 +66,38 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   sendmsg.target[3] = static_cast<int>(msg->angular.x * 100.0f);
   send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target));
 }
-static bool twai_rx_cb(twai_node_handle_t handle, const twai_rx_done_event_data_t *edata, void *user_ctx)
+
+static esp_err_t queues_init()
 {
-    uint8_t recv_buff[64];
-    twai_frame_t rx_frame = {0};
-    rx_frame.buffer = recv_buff;
-    rx_frame.buffer_len = sizeof(recv_buff);
-    if (ESP_OK == twai_node_receive_from_isr(handle, &rx_frame)) {
-        // receive ok, do something here
-        MROS2_INFO("subscribed msg %ld",  rx_frame.header.id);
-    }
-    return false;
+  rx_queue = xQueueCreate(100, sizeof(canfd_frame));
+
+  if (rx_queue == NULL)
+  {
+    return ESP_ERR_NO_MEM;
+  }
+
+  return ESP_OK;
 }
 
-static esp_err_t nmea_init(twai_node_handle_t *handle)
+static bool canfd_on_received(twai_node_handle_t handle, const twai_rx_done_event_data_t *edata, void *user_ctx)
+{
+  canfd_frame frame = {0};
+  BaseType_t woken = pdFALSE;
+
+  twai_frame_t rx_frame;
+  rx_frame.buffer = frame.data,
+  rx_frame.buffer_len = sizeof(frame.data) / sizeof(uint8_t);
+
+  if (twai_node_receive_from_isr(handle, &rx_frame) == ESP_OK)
+  {
+    frame.identifier = rx_frame.header.id;
+    frame.length = rx_frame.header.dlc;
+    xQueueSendFromISR(rx_queue, &frame, &woken);
+  }
+  return woken == pdTRUE;
+}
+
+static esp_err_t canfd_init(twai_node_handle_t *handle)
 {
   twai_onchip_node_config_t node_config = {};
   node_config.io_cfg.tx = GPIO_NUM_10;
@@ -80,7 +108,7 @@ static esp_err_t nmea_init(twai_node_handle_t *handle)
   twai_new_node_onchip(&node_config, handle);
 
   twai_event_callbacks_t callbacks = {};
-  callbacks.on_rx_done = twai_rx_cb;
+  callbacks.on_rx_done = canfd_on_received;
 
   twai_node_register_event_callbacks(*handle, &callbacks, NULL);
 
@@ -107,11 +135,30 @@ void send_can(ID_Format id, uint8_t *data, size_t size)
   osDelay(10);
 }
 
+void canrsv(void *pvParameters)
+{
+  canfd_frame received_frame = {0};
+  for (;;)
+  {
+    BaseType_t ret = xQueueReceive(rx_queue, &received_frame, portMAX_DELAY);
+
+    if (ret == pdTRUE)
+    {
+      ESP_LOGI(TAG, "received frame with id %d", received_frame.identifier);
+    }
+    else
+    {
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+  }
+}
+
+TaskHandle_t rsvHandle = NULL;
 
 extern "C" void app_main(void)
 {
-  ESP_ERROR_CHECK(nmea_init(&handle));
-
+  ESP_ERROR_CHECK(canfd_init(&handle));
+  ESP_ERROR_CHECK(queues_init());
   /* connect to the network */
   if (mros2_platform_network_connect())
   {
@@ -133,5 +180,12 @@ extern "C" void app_main(void)
   mros2::Subscriber sub = node.create_subscription<std_msgs::msg::UInt16>("turtle1/poweron", 10, userCallback);
   mros2::Subscriber sub2 = node.create_subscription<geometry_msgs::msg::Twist>("turtle1/cmd_vel", 10, userCallback2);
   osDelay(100);
+  osThreadAttr_t attributes;
+
+  attributes.name = "CANFDrsv",
+  attributes.stack_size = 5000,
+  attributes.priority = (osPriority_t)24,
+
+  osThreadNew(canrsv, NULL, (const osThreadAttr_t *)&attributes);
   mros2::spin();
 }
