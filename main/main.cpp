@@ -31,7 +31,7 @@ struct canfd_frame
 static QueueHandle_t rx_queue = NULL;
 
 static const char TAG[] = "main";
-void send_can(ID_Format id, uint8_t *data, size_t size);
+void send_can(ID_Format id, uint8_t *data, size_t size, bool is_remote);
 
 void userCallback(std_msgs::msg::UInt16 *msg)
 {
@@ -40,10 +40,10 @@ void userCallback(std_msgs::msg::UInt16 *msg)
   id.format.to_BoardType = Board_Type::PowerBoard;
   id.format.to_BoardID = 0;
   id.format.message_type = Message_Type::Target;
-  sendmsg.ON_OFF = !msg->data;
+  sendmsg.ON_OFF = msg->data;
   MROS2_INFO("power %s", msg->data ? "on" : "off");
 
-  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(PowerBoard_Target));
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(PowerBoard_Target), false);
 }
 
 void userCallback2(geometry_msgs::msg::Twist *msg)
@@ -59,12 +59,12 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   sendmsg.target[1] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 90.0f)) * msg->angular.z * msg->linear.y);
   sendmsg.target[2] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 180.0f)) * msg->angular.z * msg->linear.y);
   sendmsg.target[3] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 270.0f)) * msg->angular.z * msg->linear.y);
-  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target));
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
 
   id.format.to_BoardID = 1;
   sendmsg.mode = ControlMode::PWM_Mode;
   sendmsg.target[3] = static_cast<int>(msg->angular.x * 100.0f);
-  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target));
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
 }
 
 static esp_err_t queues_init()
@@ -118,7 +118,7 @@ static esp_err_t canfd_init(twai_node_handle_t *handle)
 
 twai_node_handle_t handle = NULL;
 
-void send_can(ID_Format id, uint8_t *data, size_t size)
+void send_can(ID_Format id, uint8_t *data, size_t size, bool is_remote)
 {
   id.format.from_BoardType = Board_Type::Master_Board;
   id.format.from_BoardID = 0;
@@ -128,7 +128,7 @@ void send_can(ID_Format id, uint8_t *data, size_t size)
   tx_msg.header.ide = true; // Use 29-bit extended ID format
   tx_msg.header.fdf = true;
   tx_msg.header.brs = true;
-  tx_msg.header.rtr = false;
+  tx_msg.header.rtr = is_remote;
   tx_msg.buffer = data;
   tx_msg.buffer_len = size;
   ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 0));
@@ -159,6 +159,13 @@ extern "C" void app_main(void)
 {
   ESP_ERROR_CHECK(canfd_init(&handle));
   ESP_ERROR_CHECK(queues_init());
+  
+  MotorBoard_Target sendmsg;
+  ID_Format id;
+  id.format.broadcast = true;
+  id.format.message_type = Message_Type::EMENGECY;
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), 0, true);
+
   /* connect to the network */
   if (mros2_platform_network_connect())
   {
@@ -185,7 +192,6 @@ extern "C" void app_main(void)
   attributes.name = "CANFDrsv",
   attributes.stack_size = 5000,
   attributes.priority = (osPriority_t)24,
-
   osThreadNew(canrsv, NULL, (const osThreadAttr_t *)&attributes);
   mros2::spin();
 }
