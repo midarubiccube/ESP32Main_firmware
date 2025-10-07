@@ -125,7 +125,7 @@ void send_can(ID_Format id, uint8_t *data, size_t size)
 
   twai_frame_t tx_msg = {};
   tx_msg.header.id = id.id;  // Message ID
-  tx_msg.header.ide = false; // Use 29-bit extended ID format
+  tx_msg.header.ide = true; // Use 29-bit extended ID format
   tx_msg.header.fdf = true;
   tx_msg.header.brs = true;
   tx_msg.header.rtr = false;
