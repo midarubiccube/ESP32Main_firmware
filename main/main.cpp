@@ -56,10 +56,10 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
 
   MotorBoard_Target sendmsg;
   sendmsg.mode = ControlMode::Encoder_Mode;
-  sendmsg.target[0] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x)) * msg->angular.z * msg->linear.y);
-  sendmsg.target[1] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 90.0f)) * msg->angular.z * msg->linear.y);
-  sendmsg.target[2] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 180.0f)) * msg->angular.z * msg->linear.y);
-  sendmsg.target[3] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 270.0f)) * msg->angular.z * msg->linear.y);
+  sendmsg.target[0] = static_cast<int>((sinf(DEG_TO_RAD(msg->linear.x)) * msg->linear.y + msg->linear.z) * msg->angular.z);
+  sendmsg.target[1] = static_cast<int>((sinf(DEG_TO_RAD(msg->linear.x - 90.0f)) *  msg->linear.y + msg->linear.z) * msg->angular.z);
+  sendmsg.target[2] = static_cast<int>((sinf(DEG_TO_RAD(msg->linear.x - 180.0f)) * msg->linear.y + msg->linear.z) * msg->angular.z);
+  sendmsg.target[3] = static_cast<int>((sinf(DEG_TO_RAD(msg->linear.x - 270.0f)) * msg->linear.y + msg->linear.z) * msg->angular.z);
   send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
 
   id.format.to_BoardID = 1;
@@ -193,6 +193,8 @@ extern "C" void app_main(void)
         auto status = reinterpret_cast<PowerBoard_Status *>(received_frame.data);
         std_msgs::msg::Float32 msg;
         msg.data = status->Current;
+          pub.publish(msg);
+
         printf("Current %f\n", status->Current);
       }
     }
