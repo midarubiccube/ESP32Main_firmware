@@ -7,6 +7,7 @@
 #include "mros2-platform.h"
 #include "std_msgs/msg/u_int16.hpp"
 #include "geometry_msgs/msg/twist.hpp"
+#include "std_msgs/msg/float32.hpp"
 
 #include "esp_err.h"
 #include "esp_check.h"
@@ -124,7 +125,7 @@ void send_can(ID_Format id, uint8_t *data, size_t size, bool is_remote)
   id.format.from_BoardID = 0;
 
   twai_frame_t tx_msg = {};
-  tx_msg.header.id = id.id;  // Message ID
+  tx_msg.header.id = id.id; // Message ID
   tx_msg.header.ide = true; // Use 29-bit extended ID format
   tx_msg.header.fdf = true;
   tx_msg.header.brs = true;
@@ -135,31 +136,13 @@ void send_can(ID_Format id, uint8_t *data, size_t size, bool is_remote)
   osDelay(10);
 }
 
-void canrsv(void *pvParameters)
-{
-  canfd_frame received_frame = {0};
-  for (;;)
-  {
-    BaseType_t ret = xQueueReceive(rx_queue, &received_frame, portMAX_DELAY);
-
-    if (ret == pdTRUE)
-    {
-      ESP_LOGI(TAG, "received frame with id %d", received_frame.identifier);
-    }
-    else
-    {
-      vTaskDelay(pdMS_TO_TICKS(100));
-    }
-  }
-}
-
 TaskHandle_t rsvHandle = NULL;
 
 extern "C" void app_main(void)
 {
   ESP_ERROR_CHECK(canfd_init(&handle));
   ESP_ERROR_CHECK(queues_init());
-  
+
   MotorBoard_Target sendmsg;
   ID_Format id;
   id.format.broadcast = true;
@@ -185,13 +168,35 @@ extern "C" void app_main(void)
 
   mros2::Node node = mros2::Node::create_node("mros2_node");
   mros2::Subscriber sub = node.create_subscription<std_msgs::msg::UInt16>("turtle1/poweron", 10, userCallback);
+  mros2::Publisher pub = node.create_publisher<std_msgs::msg::Float32>("to_linux", 10);
   mros2::Subscriber sub2 = node.create_subscription<geometry_msgs::msg::Twist>("turtle1/cmd_vel", 10, userCallback2);
   osDelay(100);
   osThreadAttr_t attributes;
 
-  attributes.name = "CANFDrsv",
+  /*attributes.name = "CANFDrsv",
   attributes.stack_size = 5000,
   attributes.priority = (osPriority_t)24,
-  osThreadNew(canrsv, NULL, (const osThreadAttr_t *)&attributes);
-  mros2::spin();
+  osThreadNew(canrsv, NULL, (const osThreadAttr_t *)&attributes);*/
+
+  canfd_frame received_frame = {0};
+  for (;;)
+  {
+    BaseType_t ret = xQueueReceive(rx_queue, &received_frame, portMAX_DELAY);
+
+    if (ret == pdTRUE)
+    {
+      ID_Format id;
+      id.id = received_frame.identifier;
+      if (id.format.to_BoardType == Board_Type::Master_Board && id.format.from_BoardType == Board_Type::PowerBoard)
+      {
+        auto status = reinterpret_cast<PowerBoard_Status *>(received_frame.data);
+        std_msgs::msg::Float32 msg;
+        msg.data = status->Current;
+      }
+    }
+    else
+    {
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+  }
 }
