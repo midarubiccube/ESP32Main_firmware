@@ -55,7 +55,7 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   id.format.message_type = Message_Type::Target;
 
   MotorBoard_Target sendmsg;
-  sendmsg.mode = ControlMode::PWM_Mode;
+  sendmsg.mode = ControlMode::Encoder_Mode;
   sendmsg.target[0] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x)) * msg->angular.z * msg->linear.y);
   sendmsg.target[1] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 90.0f)) * msg->angular.z * msg->linear.y);
   sendmsg.target[2] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 180.0f)) * msg->angular.z * msg->linear.y);
@@ -64,8 +64,14 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
 
   id.format.to_BoardID = 1;
   sendmsg.mode = ControlMode::PWM_Mode;
-  sendmsg.target[3] = static_cast<int>(msg->angular.x * 100.0f);
+  sendmsg.target[3] = static_cast<int>(msg->angular.x * 500.0f);
   send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
+
+  id.format.to_BoardID = 2;
+  sendmsg.mode = ControlMode::PWM_Mode;
+  sendmsg.target[3] = static_cast<int>(msg->angular.y * 500.0f);
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
+  
 }
 
 static esp_err_t queues_init()
@@ -173,11 +179,6 @@ extern "C" void app_main(void)
   osDelay(100);
   osThreadAttr_t attributes;
 
-  /*attributes.name = "CANFDrsv",
-  attributes.stack_size = 5000,
-  attributes.priority = (osPriority_t)24,
-  osThreadNew(canrsv, NULL, (const osThreadAttr_t *)&attributes);*/
-
   canfd_frame received_frame = {0};
   for (;;)
   {
@@ -192,6 +193,7 @@ extern "C" void app_main(void)
         auto status = reinterpret_cast<PowerBoard_Status *>(received_frame.data);
         std_msgs::msg::Float32 msg;
         msg.data = status->Current;
+        printf("Current %f\n", status->Current);
       }
     }
     else
