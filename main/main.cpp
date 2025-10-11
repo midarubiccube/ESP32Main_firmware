@@ -55,7 +55,7 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   id.format.message_type = Message_Type::Target;
 
   MotorBoard_Target sendmsg;
-  sendmsg.mode = ControlMode::Encoder_Mode;
+  sendmsg.mode = ControlMode::PWM_Mode;
   sendmsg.target[0] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x)) * msg->linear.y + msg->linear.z);
   sendmsg.target[1] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 90.0f)) *  msg->linear.y + msg->linear.z);
   sendmsg.target[2] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 180.0f)) * msg->linear.y + msg->linear.z);
@@ -70,6 +70,7 @@ void userCallback2(geometry_msgs::msg::Twist *msg)
   id.format.to_BoardID = 2;
   sendmsg.mode = ControlMode::PWM_Mode;
   sendmsg.target[3] = static_cast<int>(msg->angular.y * 500.0f);
+  sendmsg.target[1] = static_cast<int>(msg->angular.z);
   send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
   
 }
@@ -148,12 +149,6 @@ extern "C" void app_main(void)
 {
   ESP_ERROR_CHECK(canfd_init(&handle));
   ESP_ERROR_CHECK(queues_init());
-
-  MotorBoard_Target sendmsg;
-  ID_Format id;
-  id.format.broadcast = true;
-  id.format.message_type = Message_Type::EMENGECY;
-  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), 0, true);
 
   /* connect to the network */
   if (mros2_platform_network_connect())
