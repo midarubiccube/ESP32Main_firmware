@@ -3,11 +3,7 @@
 
 #include <math.h>
 
-#include "mros2.h"
-#include "mros2-platform.h"
-#include "std_msgs/msg/u_int16.hpp"
-#include "geometry_msgs/msg/twist.hpp"
-#include "std_msgs/msg/float32.hpp"
+#include "wifi.h"
 
 #include "esp_err.h"
 #include "esp_check.h"
@@ -18,6 +14,26 @@
 
 #include "messageFormat/motorBoard.hpp"
 #include "messageFormat/powerboard.hpp"
+
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+#include <lwip/netdb.h>
+
+int sock = -1;
+
+bool connected = false;
+struct sockaddr_storage source_addr;
+struct receive
+{
+  char power;
+  float linear_x;
+  float linear_y;
+  float linear_z;
+  float AXIS[5];
+  char button[5];
+}__attribute__((packed));
+
 
 struct canfd_frame
 {
@@ -34,45 +50,92 @@ static QueueHandle_t rx_queue = NULL;
 static const char TAG[] = "main";
 void send_can(ID_Format id, uint8_t *data, size_t size, bool is_remote);
 
-void userCallback(std_msgs::msg::UInt16 *msg)
+
+void sendMotorControlMessages(void* data)
 {
-  PowerBoard_Target sendmsg = {0};
+  
+  receive frame = *reinterpret_cast<receive*>(data);
+
+  PowerBoard_Target powermsg = {0};
   ID_Format id;
   id.format.to_BoardType = Board_Type::PowerBoard;
   id.format.to_BoardID = 0;
   id.format.message_type = Message_Type::Target;
-  sendmsg.ON_OFF = msg->data;
-  MROS2_INFO("power %s", msg->data ? "on" : "off");
+  powermsg.ON_OFF = frame.power;
+  //MROS2_INFO("power %s", msg->data ? "on" : "off");
 
-  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(PowerBoard_Target), false);
-}
+  send_can(id, reinterpret_cast<uint8_t *>(&powermsg), sizeof(PowerBoard_Target), false);
 
-void userCallback2(geometry_msgs::msg::Twist *msg)
-{
-  ID_Format id;
   id.format.to_BoardType = Board_Type::MotorBoard;
   id.format.to_BoardID = 0;
   id.format.message_type = Message_Type::Target;
 
   MotorBoard_Target sendmsg;
   sendmsg.mode = ControlMode::PWM_Mode;
-  sendmsg.target[0] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x)) * msg->linear.y + msg->linear.z);
-  sendmsg.target[1] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 90.0f)) *  msg->linear.y + msg->linear.z);
-  sendmsg.target[2] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 180.0f)) * msg->linear.y + msg->linear.z);
-  sendmsg.target[3] = static_cast<int>(sinf(DEG_TO_RAD(msg->linear.x - 270.0f)) * msg->linear.y + msg->linear.z);
+  sendmsg.target[1] = static_cast<int>(sinf(DEG_TO_RAD(frame.linear_x)) * frame.linear_y + frame.linear_z);
+  sendmsg.target[2] = static_cast<int>(sinf(DEG_TO_RAD(frame.linear_x - 120.0f)) * frame.linear_y + frame.linear_z);
+  sendmsg.target[3] = static_cast<int>(sinf(DEG_TO_RAD(frame.linear_x - 240.0f)) * frame.linear_y + frame.linear_z);
+  sendmsg.target[0] = static_cast<int>(frame.AXIS[4] * -500.0f);
+  //ESP_LOGI(TAG, "power %d %d %d %d %d %d %d %d %d", sendmsg.target[0], sendmsg.target[1], sendmsg.target[2], sendmsg.target[3], frame.button[0], frame.button[1], frame.button[2], frame.button[3], frame.button[4]);
+  ESP_LOGI(TAG, "AXIS[4] %d", sendmsg.target[0] );
   send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
-
   id.format.to_BoardID = 1;
-  sendmsg.mode = ControlMode::PWM_Mode;
-  sendmsg.target[3] = static_cast<int>(msg->angular.x * 500.0f);
-  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
-
-  id.format.to_BoardID = 2;
-  sendmsg.mode = ControlMode::PWM_Mode;
-  sendmsg.target[3] = static_cast<int>(msg->angular.y * 500.0f);
-  sendmsg.target[1] = static_cast<int>(msg->angular.z);
-  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
   
+  /*sendmsg.target[1] = 0; 
+  sendmsg.mode = ControlMode::PWM_Mode;
+  if (frame.button[2] == 1) {
+    sendmsg.target[0] = 100; // 後退
+  } else if (frame.button[4] == 1) {
+    sendmsg.target[0] = -100; // 後退
+  } else {
+    sendmsg.target[0] = 0; // 停止r rrggg
+  }
+
+  sendmsg.target[1] = frame.button[3];
+
+  if (frame.AXIS[1] > 0){
+      sendmsg.target[2] = 0;
+      sendmsg.target[3] = static_cast<int>(frame.AXIS[3] * 300.0f);
+
+  } else {
+      sendmsg.target[3] = 0;
+      sendmsg.target[2] = static_cast<int>(frame.AXIS[3] * 200.0f);
+  }*/
+  sendmsg.target[3] = static_cast<int>(frame.linear_z * 5.0f);
+  send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
+}
+
+void sendSafetyMotorControlMessages(void)
+{
+  
+  PowerBoard_Target powermsg = {0};
+  ID_Format id;
+  id.format.to_BoardType = Board_Type::PowerBoard;
+  id.format.to_BoardID = 0;
+  id.format.message_type = Message_Type::Target;
+  powermsg.ON_OFF = false;
+  send_can(id, reinterpret_cast<uint8_t *>(&powermsg), sizeof(PowerBoard_Target), false);
+
+  // タイムアウト時のセーフティメッセージ：すべてのtargetを0に設定
+  id.format.to_BoardType = Board_Type::MotorBoard;
+  id.format.from_BoardType = Board_Type::Master_Board;
+  id.format.from_BoardID = 0;
+  id.format.message_type = Message_Type::Target;
+
+  MotorBoard_Target sendmsg = {};
+  sendmsg.mode = ControlMode::PWM_Mode;
+  sendmsg.target[0] = 0;
+  sendmsg.target[1] = 0;
+  sendmsg.target[2] = 0;
+  sendmsg.target[3] = 0;
+
+  // すべてのボードID(0, 1, 2)に送信
+  for (int board_id = 0; board_id < 3; board_id++)
+  {
+    id.format.to_BoardID = board_id;
+    send_can(id, reinterpret_cast<uint8_t *>(&sendmsg), sizeof(MotorBoard_Target), false);
+  }
+  ESP_LOGI(TAG, "Safety message sent: all targets set to 0");
 }
 
 static esp_err_t queues_init()
@@ -140,39 +203,92 @@ void send_can(ID_Format id, uint8_t *data, size_t size, bool is_remote)
   tx_msg.buffer = data;
   tx_msg.buffer_len = size;
   ESP_ERROR_CHECK(twai_node_transmit(handle, &tx_msg, 0));
-  osDelay(10);
+  vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 TaskHandle_t rsvHandle = NULL;
+
+#define PORT 5000
+
+static void udp_server_task(void *pvParameters)
+{
+  char rx_buffer[128];
+  char addr_str[128];
+  int ip_protocol = 0;
+  struct sockaddr_in dest_addr;
+  error_t errno;
+  while (1)
+  {
+    struct sockaddr_in *dest_addr_ip4 = &dest_addr;
+    dest_addr_ip4->sin_addr.s_addr = htonl(INADDR_ANY);
+    dest_addr_ip4->sin_family = AF_INET;
+    dest_addr_ip4->sin_port = htons(PORT);
+    ip_protocol = IPPROTO_IP;
+    sock = socket(AF_INET, SOCK_DGRAM, ip_protocol);
+    if (sock < 0)
+    {
+      ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+      break;
+    }
+    ESP_LOGI(TAG, "Socket created");
+    // Set timeout to 1 second
+    struct timeval timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+
+    int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    if (err < 0)
+    {
+      ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
+    }
+    ESP_LOGI(TAG, "Socket bound, port %d", PORT);
+
+    socklen_t socklen = sizeof(source_addr);
+
+    while (1)
+    {
+      int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+      if (len < 0)
+      {
+        // Timeout occurred (1 second with no data received)
+        ESP_LOGW(TAG, "recvfrom timeout: No data received for 1 second");
+        connected = false;
+        sendSafetyMotorControlMessages();
+      }
+      else
+      {
+        inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
+        rx_buffer[len] = 0;
+        connected = true;
+        //ESP_LOGI(TAG, "Received %d bytes from %s:", len, addr_str);
+        //ESP_LOGI(TAG, "%s", rx_buffer);
+        sendMotorControlMessages(rx_buffer);
+
+        if (err < 0)
+        {
+          ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+          break;
+        }
+      }
+    }
+
+    if (sock != -1)
+    {
+      ESP_LOGE(TAG, "Shutting down socket and restarting...");
+      shutdown(sock, 0);
+      close(sock);
+    }
+  }
+  vTaskDelete(NULL);
+}
 
 extern "C" void app_main(void)
 {
   ESP_ERROR_CHECK(canfd_init(&handle));
   ESP_ERROR_CHECK(queues_init());
-
-  /* connect to the network */
-  if (mros2_platform_network_connect())
-  {
-    MROS2_INFO("successfully connect and setup network\r\n---");
-  }
-  else
-  {
-    MROS2_ERROR("failed to connect and setup network! aborting,,,");
-    return;
-  }
-
-  MROS2_INFO("mbed mros2 start!");
-  MROS2_INFO("app name: sub_uint16");
-
-  mros2::init(0, NULL);
-  MROS2_DEBUG("mROS 2 initialization is completed");
-
-  mros2::Node node = mros2::Node::create_node("mros2_node");
-  mros2::Subscriber sub = node.create_subscription<std_msgs::msg::UInt16>("turtle1/poweron", 10, userCallback);
-  mros2::Publisher pub = node.create_publisher<std_msgs::msg::Float32>("to_linux", 10);
-  mros2::Subscriber sub2 = node.create_subscription<geometry_msgs::msg::Twist>("turtle1/cmd_vel", 10, userCallback2);
-  osDelay(100);
-  osThreadAttr_t attributes;
+  init_wifi();
+  xTaskCreate(udp_server_task, "udp_server", 4096, NULL, 5, NULL);
 
   canfd_frame received_frame = {0};
   for (;;)
@@ -186,16 +302,18 @@ extern "C" void app_main(void)
       if (id.format.to_BoardType == Board_Type::Master_Board && id.format.from_BoardType == Board_Type::PowerBoard)
       {
         auto status = reinterpret_cast<PowerBoard_Status *>(received_frame.data);
-        std_msgs::msg::Float32 msg;
-        msg.data = status->Current;
-          pub.publish(msg);
-
-        printf("Current %f\n", status->Current);
+        float msg;
+        msg = status->Current;
+        if (connected)
+        {
+          sendto(sock, &msg, sizeof(msg), 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
+        }
+        //printf("Current %f\n", status->Current);
       }
     }
     else
     {
-      vTaskDelay(pdMS_TO_TICKS(100));
+      vTaskDelay(pdMS_TO_TICKS(10));
     }
   }
 }
